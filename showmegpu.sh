@@ -9,6 +9,7 @@ COLOR_BLUE="\e[38;5;33m"     # Bright blue
 COLOR_MAGENTA="\e[38;5;204m" # Bright magenta
 COLOR_GRAY="\e[38;5;245m"    # Soft gray
 COLOR_BOLD="\e[1m"
+COLOR_ORANGE="\e[38;5;208m"  # Orange for medium-high utilization
 
 # Unicode symbols to keep the rocket emoji
 ICON_RUNNING="🚀"  # Running indicator
@@ -28,7 +29,7 @@ BOX_SPACING=0    # Reduced spacing between boxes
 LINE_SPACING=0   # No extra spacing within boxes
 
 echo -e "${COLOR_BOLD}${COLOR_CYAN}GPU PROCESS MONITOR${COLOR_RESET}"
-echo -e "${COLOR_GRAY}════════════════════════════════════════════════════════${COLOR_RESET}"
+echo -e "${COLOR_GRAY}══════════════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
 
 # Generate GPU mapping using associative array
 declare -A gpu_mapping
@@ -36,9 +37,42 @@ while IFS=',' read -r index uuid; do
   gpu_mapping["$uuid"]="$index"
 done < <(nvidia-smi --query-gpu=index,uuid --format=csv,noheader)
 
+# Store GPU utilization data with color coding based on utilization level
+declare -A gpu_utilization
+declare -A gpu_utilization_color
+while IFS=',' read -r index util; do
+  # Trim whitespace and store the utilization
+  util=$(echo $util | xargs)
+  gpu_utilization["$index"]="$util"
+  
+  # Extract numeric value from utilization percentage
+  util_value=$(echo $util | sed 's/%//')
+  
+  # Color code based on utilization percentage
+  if (( $(echo "$util_value < 30" | bc -l) )); then
+    gpu_utilization_color["$index"]="${COLOR_GREEN}"  # Low utilization: green
+  elif (( $(echo "$util_value < 60" | bc -l) )); then
+    gpu_utilization_color["$index"]="${COLOR_YELLOW}" # Medium utilization: yellow
+  elif (( $(echo "$util_value < 80" | bc -l) )); then
+    gpu_utilization_color["$index"]="${COLOR_ORANGE}" # Medium-high utilization: orange
+  else
+    gpu_utilization_color["$index"]="${COLOR_RED}"    # High utilization: red
+  fi
+done < <(nvidia-smi --query-gpu=index,utilization.gpu --format=csv,noheader)
+
 # Count number of processes to display
 process_count=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l)
 echo -e "${COLOR_YELLOW}Found ${process_count} GPU processes${COLOR_RESET}\n"
+
+# Display current GPU utilization summary
+echo -e "${COLOR_BOLD}${COLOR_CYAN}CURRENT GPU UTILIZATION${COLOR_RESET}"
+for index in "${!gpu_utilization[@]}"; do
+  util="${gpu_utilization[$index]}"
+  util_color="${gpu_utilization_color[$index]}"
+  
+  echo -e "  GPU ${COLOR_BOLD}${COLOR_CYAN}$index${COLOR_RESET}: ${util_color}${util}${COLOR_RESET}"
+done
+echo -e "${COLOR_GRAY}══════════════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}\n"
 
 # Draw a box around each process with fixed width
 draw_box_top() {
@@ -91,6 +125,8 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
   fi
   
   gpu_index="${gpu_mapping[$gpu_uuid]}"
+  current_gpu_util="${gpu_utilization[$gpu_index]}"
+  current_gpu_util_color="${gpu_utilization_color[$gpu_index]}"
   
   # Check if process is still running
   if ! ps -p "$pid" > /dev/null 2>&1; then
@@ -118,6 +154,7 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
   draw_box_top
   draw_box_content "${COLOR_BOLD}PID:${COLOR_RESET} ${COLOR_GREEN}${pid}${COLOR_RESET}  ${status}"
   draw_box_content "${COLOR_BOLD}GPU:${COLOR_RESET} ${COLOR_CYAN}${gpu_index}${COLOR_RESET}"
+  draw_box_content "${COLOR_BOLD}GPU Utilization:${COLOR_RESET} ${current_gpu_util_color}${current_gpu_util}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Memory:${COLOR_RESET} ${COLOR_YELLOW}${used_memory}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Process:${COLOR_RESET} ${COLOR_GRAY}${process_name}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Started:${COLOR_RESET} ${COLOR_BLUE}${start_time_bj}${COLOR_RESET}"
@@ -126,5 +163,4 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
 done
 
 echo -e ""  # You can adjust this further for spacing between boxes
-echo -e "${COLOR_CYAN}Monitor completed at: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S")${COLOR_RESET}"  
-
+echo -e "${COLOR_CYAN}Monitor completed at: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S")${COLOR_RESET}"
