@@ -60,19 +60,49 @@ while IFS=',' read -r index util; do
   fi
 done < <(nvidia-smi --query-gpu=index,utilization.gpu --format=csv,noheader)
 
+# Store GPU memory utilization with color coding
+declare -A gpu_memory
+declare -A gpu_memory_color
+declare -A gpu_memory_used
+declare -A gpu_memory_total
+while IFS=',' read -r index used total; do
+  # Trim whitespace
+  used=$(echo $used | xargs)
+  total=$(echo $total | xargs)
+  
+  # Store raw values
+  gpu_memory_used["$index"]="$used"
+  gpu_memory_total["$index"]="$total"
+  
+  # Calculate percentage
+  used_value=$(echo $used | sed 's/[^0-9]//g')
+  total_value=$(echo $total | sed 's/[^0-9]//g')
+  
+  # Avoid division by zero
+  if [ "$total_value" -ne 0 ]; then
+    percent=$(echo "scale=2; $used_value * 100 / $total_value" | bc)
+  else
+    percent=0
+  fi
+  
+  # Format memory usage display
+  gpu_memory["$index"]="${used} / ${total} (${percent}%)"
+  
+  # Color code based on percentage
+  if (( $(echo "$percent < 30" | bc -l) )); then
+    gpu_memory_color["$index"]="${COLOR_GREEN}"  # Low memory usage: green
+  elif (( $(echo "$percent < 60" | bc -l) )); then
+    gpu_memory_color["$index"]="${COLOR_YELLOW}" # Medium memory usage: yellow
+  elif (( $(echo "$percent < 80" | bc -l) )); then
+    gpu_memory_color["$index"]="${COLOR_ORANGE}" # Medium-high memory usage: orange
+  else
+    gpu_memory_color["$index"]="${COLOR_RED}"    # High memory usage: red
+  fi
+done < <(nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader)
+
 # Count number of processes to display
 process_count=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l)
 echo -e "${COLOR_YELLOW}Found ${process_count} GPU processes${COLOR_RESET}\n"
-
-# Display current GPU utilization summary
-echo -e "${COLOR_BOLD}${COLOR_CYAN}CURRENT GPU UTILIZATION${COLOR_RESET}"
-for index in "${!gpu_utilization[@]}"; do
-  util="${gpu_utilization[$index]}"
-  util_color="${gpu_utilization_color[$index]}"
-  
-  echo -e "  GPU ${COLOR_BOLD}${COLOR_CYAN}$index${COLOR_RESET}: ${util_color}${util}${COLOR_RESET}"
-done
-echo -e "${COLOR_GRAY}══════════════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}\n"
 
 # Draw a box around each process with fixed width
 draw_box_top() {
@@ -127,6 +157,8 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
   gpu_index="${gpu_mapping[$gpu_uuid]}"
   current_gpu_util="${gpu_utilization[$gpu_index]}"
   current_gpu_util_color="${gpu_utilization_color[$gpu_index]}"
+  current_gpu_memory="${gpu_memory[$gpu_index]}"
+  current_gpu_memory_color="${gpu_memory_color[$gpu_index]}"
   
   # Check if process is still running
   if ! ps -p "$pid" > /dev/null 2>&1; then
@@ -155,12 +187,28 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
   draw_box_content "${COLOR_BOLD}PID:${COLOR_RESET} ${COLOR_GREEN}${pid}${COLOR_RESET}  ${status}"
   draw_box_content "${COLOR_BOLD}GPU:${COLOR_RESET} ${COLOR_CYAN}${gpu_index}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}GPU Utilization:${COLOR_RESET} ${current_gpu_util_color}${current_gpu_util}${COLOR_RESET}"
-  draw_box_content "${COLOR_BOLD}Memory:${COLOR_RESET} ${COLOR_YELLOW}${used_memory}${COLOR_RESET}"
+  draw_box_content "${COLOR_BOLD}GPU Memory:${COLOR_RESET} ${current_gpu_memory_color}${current_gpu_memory}${COLOR_RESET}"
+  draw_box_content "${COLOR_BOLD}Process Memory:${COLOR_RESET} ${COLOR_YELLOW}${used_memory}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Process:${COLOR_RESET} ${COLOR_GRAY}${process_name}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Started:${COLOR_RESET} ${COLOR_BLUE}${start_time_bj}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Path:${COLOR_RESET} ${COLOR_GRAY}${full_path}${COLOR_RESET}"
   draw_box_bottom
 done
 
-echo -e ""  # You can adjust this further for spacing between boxes
-echo -e "${COLOR_CYAN}Monitor completed at: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S")${COLOR_RESET}"
+echo -e ""
+echo -e "${COLOR_GRAY}══════════════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
+
+# Display GPU utilization and memory summary at the bottom
+echo -e "\n${COLOR_BOLD}${COLOR_CYAN}GPU UTILIZATION AND MEMORY SUMMARY${COLOR_RESET}"
+for index in "${!gpu_utilization[@]}"; do
+  util="${gpu_utilization[$index]}"
+  util_color="${gpu_utilization_color[$index]}"
+  mem="${gpu_memory[$index]}"
+  mem_color="${gpu_memory_color[$index]}"
+  
+  echo -e "  GPU ${COLOR_BOLD}${COLOR_CYAN}$index${COLOR_RESET}: "
+  echo -e "    Compute: ${util_color}${util}${COLOR_RESET}"
+  echo -e "    Memory:  ${mem_color}${mem}${COLOR_RESET}"
+done
+
+echo -e "\n${COLOR_CYAN}Monitor completed at: $(TZ='Asia/Shanghai' date +"%Y-%m-%d %H:%M:%S")${COLOR_RESET}"
