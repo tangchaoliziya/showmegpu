@@ -148,6 +148,103 @@ draw_box_content() {
   echo -e "${COLOR_GRAY}${VERTICAL}${COLOR_RESET} $content${pad_string} ${COLOR_GRAY}${VERTICAL}${COLOR_RESET}"
 }
 
+# Function to extract script path from command line
+extract_script_path() {
+  local cmd_line="$1"
+  local proc_cwd="$2"
+  local script_path="<not available>"
+  
+  # Check for various script types
+  # Python scripts (.py)
+  if [[ "$cmd_line" == *"python"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.py' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # Shell scripts (.sh)
+  elif [[ "$cmd_line" == *".sh"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.sh' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # JavaScript/Node.js scripts (.js)
+  elif [[ "$cmd_line" == *"node"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.js' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # Ruby scripts (.rb)
+  elif [[ "$cmd_line" == *"ruby"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.rb' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # Perl scripts (.pl)
+  elif [[ "$cmd_line" == *"perl"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.pl' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # PHP scripts (.php)
+  elif [[ "$cmd_line" == *"php"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.php' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # R scripts (.R)
+  elif [[ "$cmd_line" == *"Rscript"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.R' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # Julia scripts (.jl)
+  elif [[ "$cmd_line" == *"julia"* ]]; then
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.jl' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      script_path=$(resolve_path "$script_file" "$proc_cwd")
+    fi
+  # Jupyter notebooks via jupyter command
+  elif [[ "$cmd_line" == *"jupyter"* ]]; then
+    local notebook_file=$(echo "$cmd_line" | grep -o '[^ ]*\.ipynb' | head -1)
+    if [[ ! -z "$notebook_file" ]]; then
+      script_path=$(resolve_path "$notebook_file" "$proc_cwd")
+    fi
+  # Generic script detection - look for any file with extension after interpreter
+  else
+    # Try to find any file with extension in command line
+    local script_file=$(echo "$cmd_line" | grep -o '[^ ]*\.[a-zA-Z0-9]\{1,5\}' | head -1)
+    if [[ ! -z "$script_file" ]]; then
+      # Exclude common library extensions
+      if [[ ! "$script_file" =~ \.(so|dll|dylib|o|a)$ ]]; then
+        script_path=$(resolve_path "$script_file" "$proc_cwd")
+      fi
+    fi
+  fi
+  
+  echo "$script_path"
+}
+
+# Function to resolve relative paths
+resolve_path() {
+  local script_file="$1"
+  local proc_cwd="$2"
+  local resolved_path
+  
+  # Get absolute path if it's relative
+  if [[ "$script_file" == /* ]]; then
+    resolved_path="$script_file"
+  else
+    # Try to get working directory of the process
+    if [[ ! -z "$proc_cwd" ]]; then
+      resolved_path="$proc_cwd/$script_file"
+    else
+      resolved_path="$script_file"
+    fi
+  fi
+  
+  echo "$resolved_path"
+}
+
 # Retrieve compute applications data
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=csv,noheader | while IFS=, read -r pid gpu_uuid used_memory process_name; do
   if [[ -z "$pid" ]]; then
@@ -165,6 +262,7 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
     status="${COLOR_RED}${ICON_EXITED} EXITED${COLOR_RESET}"
     start_time="N/A"
     full_path="N/A"
+    script_path="N/A"
   else
     status="${COLOR_GREEN}${ICON_RUNNING} RUNNING${COLOR_RESET}"
     start_time=$(ps -o lstart= -p "$pid")
@@ -175,11 +273,24 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
     if [[ -z "$full_path" ]]; then
       full_path="<path not accessible>"
     fi
+    
+    # Get the script path if available
+    script_path="<not available>"
+    # Try to get command line to find script path
+    if [[ -f "/proc/$pid/cmdline" ]]; then
+      cmd_line=$(tr '\0' ' ' < /proc/$pid/cmdline)
+      proc_cwd=$(readlink -f /proc/$pid/cwd 2>/dev/null)
+      script_path=$(extract_script_path "$cmd_line" "$proc_cwd")
+    fi
   fi
   
   # Truncate long paths to fit in box
   if [[ ${#full_path} -gt $((BOX_WIDTH - 15)) ]]; then
     full_path="${full_path:0:$((BOX_WIDTH - 18))}..."
+  fi
+  
+  if [[ ${#script_path} -gt $((BOX_WIDTH - 15)) ]]; then
+    script_path="${script_path:0:$((BOX_WIDTH - 18))}..."
   fi
   
   # Print process block with box drawing
@@ -192,6 +303,7 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=c
   draw_box_content "${COLOR_BOLD}Process:${COLOR_RESET} ${COLOR_GRAY}${process_name}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Started:${COLOR_RESET} ${COLOR_BLUE}${start_time_bj}${COLOR_RESET}"
   draw_box_content "${COLOR_BOLD}Path:${COLOR_RESET} ${COLOR_GRAY}${full_path}${COLOR_RESET}"
+  draw_box_content "${COLOR_BOLD}Script:${COLOR_RESET} ${COLOR_MAGENTA}${script_path}${COLOR_RESET}"
   draw_box_bottom
 done
 
